@@ -1,0 +1,9 @@
+1. Create a secret key in ChatGPT.
+Note that you will have to save your 
+
+2. In Google Apps Script, go to the settings, and click on "Add script property" in "Script Properties".
+
+3. If you don't have OpenAI credits, go over there to add some.
+There are other ways to obtain the same result. Contact me for more information.
+
+4.
