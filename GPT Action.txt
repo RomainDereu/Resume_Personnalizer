@@ -1,0 +1,141 @@
+openapi: 3.1.0
+
+info:
+  title: Google Application Document Editor
+  version: 1.0.0
+  description: >
+    Applies approved exact before-and-after text
+    replacements to Google Slides and Google Docs.
+    Replacement text is colored red.
+
+servers:
+  - url: https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID
+
+paths:
+  /exec:
+    get:
+      operationId: checkEditorStatus
+      summary: Check whether the editor is available
+
+      responses:
+        "200":
+          description: Editor status
+
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  service:
+                    type: string
+
+    post:
+      operationId: applyTextChanges
+      summary: Apply approved text changes
+      description: >
+        Applies exact before-and-after replacements
+        to a Google Slides presentation or Google
+        Docs document. All replacement text is red.
+
+      requestBody:
+        required: true
+
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+
+              properties:
+                webhookSecret:
+                  type: string
+                  enum:
+                    - YOUR_WEBHOOK_SECRET
+                  description: >
+                    Private shared secret required
+                    by the editing endpoint.
+
+                fileType:
+                  type: string
+                  enum:
+                    - slides
+                    - docs
+
+                fileId:
+                  type: string
+                  description: >
+                    Full Google file URL or raw
+                    Google file ID.
+
+                changes:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+
+                  items:
+                    type: object
+                    additionalProperties: false
+
+                    properties:
+                      before:
+                        type: string
+                        description: >
+                          Exact existing text to find.
+
+                      after:
+                        type: string
+                        description: >
+                          Exact replacement text.
+
+                    required:
+                      - before
+                      - after
+
+              required:
+                - webhookSecret
+                - fileType
+                - fileId
+                - changes
+
+      responses:
+        "200":
+          description: Editing result
+
+          content:
+            application/json:
+              schema:
+                type: object
+
+                properties:
+                  ok:
+                    type: boolean
+
+                  fileType:
+                    type: string
+
+                  fileId:
+                    type: string
+
+                  totalReplacements:
+                    type: integer
+
+                  results:
+                    type: array
+
+                    items:
+                      type: object
+
+                      properties:
+                        before:
+                          type: string
+
+                        after:
+                          type: string
+
+                        replacements:
+                          type: integer
+
+                  error:
+                    type: string

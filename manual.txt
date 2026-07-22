@@ -6,4 +6,24 @@ Note that you will have to save your
 3. If you don't have OpenAI credits, go over there to add some.
 There are other ways to obtain the same result. Contact me for more information.
 
-4.
+4. Add a secret in Google sheets so OpenAI can access it.
+
+
+5. Publish Google App: 
+
+Select Deploy → New deployment.
+Select Web app.
+Set Execute as to Me.
+Set access to Anyone.
+Select Deploy.
+Approve the requested Google permissions.
+Copy the web-app URL ending in
+
+
+6. Configure the Custom GPT Action
+
+Select Create new action.
+Set Authentication to None for this prototype.
+Paste the following schema.
+Replace YOUR_DEPLOYMENT_ID.
+Replace YOUR_WEBHOOK_SECRET.
