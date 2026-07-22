@@ -4,7 +4,7 @@
  *   - the file ID
  */
 const SOURCE_FILE_URL_OR_ID =
-  'PASTE_SOURCE_FILE_URL_OR_ID_HERE';
+  'https://docs.google.com/presentation/d/1ZwYm7HHoyBKGbRZF-Z7M4uPQVpvBhQ_aBurm6s-0n5k/edit?slide=id.p#slide=id.p';
 
 /**
  * Replaces the contents of the current Google Doc or Google Slides file

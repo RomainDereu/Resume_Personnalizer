@@ -1,11 +1,57 @@
+/**
+ * Confirms that the Google account running this script
+ * can open the target presentation by ID.
+ */
+function testTargetPresentationAccess() {
+  const presentationUrl =
+    'https://docs.google.com/presentation/d/1fZoeg628A8gaKly_Y4Yv0Pt8fjkbaUi8cDCjTgBKJMw/edit';
+
+  const presentationId =
+    extractGoogleFileId_(presentationUrl);
+
+  console.log(
+    'Extracted presentation ID: ' +
+    presentationId
+  );
+
+  console.log(
+    'Effective Google account: ' +
+    Session.getEffectiveUser().getEmail()
+  );
+
+  const presentation =
+    SlidesApp.openById(presentationId);
+
+  console.log(
+    'Opened presentation: ' +
+    presentation.getName()
+  );
+
+  console.log(
+    'Confirmed ID: ' +
+    presentation.getId()
+  );
+
+  console.log(
+    'Presentation URL: ' +
+    presentation.getUrl()
+  );
+
+  presentation.saveAndClose();
+}
+
 const OPENAI_API_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_MODEL = 'gpt-5.6-luna';
 
-/**
- * Adds a menu to the spreadsheet.
- */
+const WEBHOOK_SECRET_PROPERTY = 'WEBHOOK_SECRET';
+const MAX_CHANGES_PER_REQUEST = 50;
+
+
 /**
  * Adds a menu to the Google Slides presentation.
+ *
+ * These menu commands are local tests.
+ * Direct ChatGPT orders arrive through doPost().
  */
 function onOpen() {
   SlidesApp.getUi()
@@ -16,11 +62,11 @@ function onOpen() {
     )
     .addSeparator()
     .addItem(
-      'Replace Los Angeles → New York in presentation',
+      'Local test: Los Angeles → New York in Slides',
       'testAIReplacementInPresentation'
     )
     .addItem(
-      'Replace Los Angeles → New York in Google Doc',
+      'Local test: Los Angeles → New York in Google Doc',
       'testAIReplacementInDocument'
     )
     .addToUi();
@@ -80,16 +126,14 @@ function testOpenAIConnection() {
     );
   }
 
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-
-  if (spreadsheet) {
-    spreadsheet.toast(
-      outputText,
-      'OpenAI connection test',
-      10
+  try {
+    SlidesApp.getUi().alert(
+      'OpenAI result: ' + outputText
     );
-  } else {
-    console.log('OpenAI result: ' + outputText);
+  } catch (error) {
+    console.log(
+      'OpenAI result: ' + outputText
+    );
   }
 
   return outputText;
@@ -125,251 +169,382 @@ function extractOutputText_(data) {
 
 
 
-
-
-/**
- * End-to-end test for the current Google Slides presentation.
+/* =====================================================
+ * CHATGPT ACTION WEB ENDPOINT
+ * =====================================================
  */
-function testAIReplacementInPresentation() {
-  const change = getExampleChangeFromOpenAI_();
-
-  validateExampleChange_(change);
-
-  const presentation =
-    SlidesApp.getActivePresentation();
-
-  if (!presentation) {
-    throw new Error(
-      'No active Google Slides presentation was found. ' +
-      'This Apps Script project must be opened through ' +
-      'Extensions → Apps Script inside the presentation.'
-    );
-  }
-
-  const count = replaceTextInPresentation_(
-    presentation,
-    change.before,
-    change.after
-  );
-
-  if (count === 0) {
-    throw new Error(
-      '"' + change.before + '" was not found ' +
-      'anywhere in the presentation.'
-    );
-  }
-
-  SlidesApp.getUi().alert(
-    'Replacement complete.\n\n' +
-    'Changed "' + change.before + '" to "' +
-    change.after + '" in ' + count +
-    ' location(s).\n\n' +
-    'The replacement text should be red.'
-  );
-}
 
 
 /**
- * End-to-end test for a Google Docs document.
+ * Simple health-check endpoint.
  *
- * The script asks for the Google Doc URL or file ID.
+ * Opening the deployed web-app URL in a browser should
+ * return a small JSON response showing that it is ready.
  */
-function testAIReplacementInDocument() {
-  const ui = SlidesApp.getUi();
-
-  const promptResult = ui.prompt(
-    'Select Google Doc',
-    'Paste the Google Doc URL or file ID:',
-    ui.ButtonSet.OK_CANCEL
-  );
-
-  if (
-    promptResult.getSelectedButton() !==
-    ui.Button.OK
-  ) {
-    return;
-  }
-
-  const documentId = extractGoogleFileId_(
-    promptResult.getResponseText()
-  );
-
-  const change = getExampleChangeFromOpenAI_();
-
-  validateExampleChange_(change);
-
-  const document =
-    DocumentApp.openById(documentId);
-
-  const count = replaceTextInDocument_(
-    document,
-    change.before,
-    change.after
-  );
-
-  document.saveAndClose();
-
-  if (count === 0) {
-    throw new Error(
-      '"' + change.before + '" was not found ' +
-      'anywhere in the Google Doc.'
-    );
-  }
-
-  ui.alert(
-    'Replacement complete.\n\n' +
-    'Changed "' + change.before + '" to "' +
-    change.after + '" in ' + count +
-    ' location(s).\n\n' +
-    'The replacement text should be red.'
-  );
+function doGet() {
+  return jsonResponse_({
+    ok: true,
+    service: 'Job Application Assistant',
+    supportedFileTypes: [
+      'slides',
+      'docs'
+    ]
+  });
 }
 
 
 /**
- * Requests this exact example from OpenAI:
+ * Receives direct editing orders from a Custom GPT Action.
+ *
+ * Expected request:
  *
  * {
- *   "before": "Los Angeles",
- *   "after": "New York"
+ *   "webhookSecret": "...",
+ *   "fileType": "slides",
+ *   "fileId": "Google file URL or ID",
+ *   "changes": [
+ *     {
+ *       "before": "Funabashi",
+ *       "after": "New York"
+ *     }
+ *   ]
  * }
  */
-function getExampleChangeFromOpenAI_() {
-  const apiKey = PropertiesService
-    .getScriptProperties()
-    .getProperty('OPENAI_API_KEY');
+function doPost(e) {
+  try {
+    const request = parseJsonRequest_(e);
 
-  if (!apiKey) {
-    throw new Error(
-      'OPENAI_API_KEY was not found in Apps Script ' +
-      'project properties.'
+    /*
+     * Diagnostic logging.
+     * Do not log the webhook secret.
+     */
+    console.log(
+      'Web-app effective user: ' +
+      Session.getEffectiveUser().getEmail()
     );
+
+    console.log(
+      'Received fileType: ' +
+      String(request.fileType || '')
+    );
+
+    console.log(
+      'Received raw fileId: ' +
+      String(request.fileId || '')
+    );
+
+    authenticateActionRequest_(request);
+
+    const command =
+      validateActionRequest_(request);
+
+    console.log(
+      'Extracted file ID: ' +
+      command.fileId
+    );
+
+    let result;
+
+    if (command.fileType === 'slides') {
+      result = applyActionChangesToSlides_(
+        command.fileId,
+        command.changes
+      );
+    } else {
+      result = applyActionChangesToDocument_(
+        command.fileId,
+        command.changes
+      );
+    }
+
+    return jsonResponse_({
+      ok: true,
+      fileType: command.fileType,
+      fileId: command.fileId,
+      totalReplacements:
+        result.totalReplacements,
+      results: result.results
+    });
+  } catch (error) {
+    console.error(
+      error && error.stack
+        ? error.stack
+        : String(error)
+    );
+
+    return jsonResponse_({
+      ok: false,
+      error:
+        error && error.message
+          ? error.message
+          : String(error)
+    });
   }
+}
 
-  const payload = {
-    model: OPENAI_MODEL,
 
-    instructions: [
-      'Return one before-and-after text replacement.',
-      'The before value must be exactly: Los Angeles',
-      'The after value must be exactly: New York',
-      'Return data matching the supplied JSON schema.'
-    ].join('\n'),
-
-    input:
-      'Provide the requested text replacement.',
-
-    store: false,
-    max_output_tokens: 100,
-
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'text_replacement',
-        strict: true,
-
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-
-          properties: {
-            before: {
-              type: 'string'
-            },
-
-            after: {
-              type: 'string'
-            }
-          },
-
-          required: [
-            'before',
-            'after'
-          ]
-        }
-      }
-    }
-  };
-
-  const response = UrlFetchApp.fetch(
-    OPENAI_API_URL,
-    {
-      method: 'post',
-      contentType: 'application/json',
-
-      headers: {
-        Authorization: 'Bearer ' + apiKey
-      },
-
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    }
-  );
-
-  const statusCode =
-    response.getResponseCode();
-
-  const responseBody =
-    response.getContentText();
-
-  console.log(
-    'Status code: ' + statusCode
-  );
-
-  console.log(
-    'Response: ' + responseBody
-  );
-
+/**
+ * Reads and parses the incoming JSON request body.
+ */
+function parseJsonRequest_(e) {
   if (
-    statusCode < 200 ||
-    statusCode >= 300
+    !e ||
+    !e.postData ||
+    !e.postData.contents
   ) {
     throw new Error(
-      'OpenAI API error ' +
-      statusCode +
-      ':\n' +
-      responseBody
-    );
-  }
-
-  const data =
-    JSON.parse(responseBody);
-
-  const outputText =
-    extractOutputText_(data);
-
-  if (!outputText) {
-    throw new Error(
-      'OpenAI returned no output text.\n' +
-      responseBody
+      'The request body was empty.'
     );
   }
 
   try {
-    return JSON.parse(outputText);
+    return JSON.parse(
+      e.postData.contents
+    );
   } catch (error) {
     throw new Error(
-      'OpenAI output was not valid JSON:\n' +
-      outputText
+      'The request body was not valid JSON.'
     );
   }
 }
 
 
 /**
- * Safety check for this specific test.
+ * Confirms that the request contains the correct
+ * shared secret.
  */
-function validateExampleChange_(change) {
-  if (
-    !change ||
-    change.before !== 'Los Angeles' ||
-    change.after !== 'New York'
-  ) {
+function authenticateActionRequest_(request) {
+  const expectedSecret =
+    PropertiesService
+      .getScriptProperties()
+      .getProperty(
+        WEBHOOK_SECRET_PROPERTY
+      );
+
+  if (!expectedSecret) {
     throw new Error(
-      'OpenAI returned an unexpected change:\n' +
-      JSON.stringify(change, null, 2)
+      'WEBHOOK_SECRET is not configured ' +
+      'in Script Properties.'
     );
   }
+
+  const receivedSecret = String(
+    request.webhookSecret || ''
+  );
+
+  if (receivedSecret !== expectedSecret) {
+    throw new Error(
+      'Unauthorized request.'
+    );
+  }
+}
+
+
+/**
+ * Validates and normalizes the incoming command.
+ */
+function validateActionRequest_(request) {
+  const fileType = String(
+    request.fileType || ''
+  )
+    .trim()
+    .toLowerCase();
+
+  if (
+    fileType !== 'slides' &&
+    fileType !== 'docs'
+  ) {
+    throw new Error(
+      'fileType must be either ' +
+      '"slides" or "docs".'
+    );
+  }
+
+  const fileId = extractGoogleFileId_(
+    request.fileId
+  );
+
+  if (!Array.isArray(request.changes)) {
+    throw new Error(
+      'changes must be an array.'
+    );
+  }
+
+  if (request.changes.length === 0) {
+    throw new Error(
+      'At least one change is required.'
+    );
+  }
+
+  if (
+    request.changes.length >
+    MAX_CHANGES_PER_REQUEST
+  ) {
+    throw new Error(
+      'A maximum of ' +
+      MAX_CHANGES_PER_REQUEST +
+      ' changes is allowed per request.'
+    );
+  }
+
+  const normalizedChanges =
+    request.changes.map(
+      function(change, index) {
+        if (
+          !change ||
+          typeof change.before !== 'string' ||
+          typeof change.after !== 'string'
+        ) {
+          throw new Error(
+            'Change ' +
+            (index + 1) +
+            ' must contain before and after strings.'
+          );
+        }
+
+        if (change.before.length === 0) {
+          throw new Error(
+            'Change ' +
+            (index + 1) +
+            ' has an empty before value.'
+          );
+        }
+
+        if (change.after.length === 0) {
+          throw new Error(
+            'Change ' +
+            (index + 1) +
+            ' has an empty after value.'
+          );
+        }
+
+        if (
+          change.before ===
+          change.after
+        ) {
+          throw new Error(
+            'Change ' +
+            (index + 1) +
+            ' has identical before and after values.'
+          );
+        }
+
+        return {
+          before: change.before,
+          after: change.after
+        };
+      }
+    );
+
+  return {
+    fileType: fileType,
+    fileId: fileId,
+    changes: normalizedChanges
+  };
+}
+
+
+/**
+ * Opens a Google Slides presentation by ID
+ * and applies all requested changes.
+ */
+function applyActionChangesToSlides_(
+  fileId,
+  changes
+) {
+  const presentation =
+    SlidesApp.openById(fileId);
+
+  const results = [];
+  let totalReplacements = 0;
+
+  try {
+    changes.forEach(function(change) {
+      const replacementCount =
+        replaceTextInPresentation_(
+          presentation,
+          change.before,
+          change.after
+        );
+
+      totalReplacements +=
+        replacementCount;
+
+      results.push({
+        before: change.before,
+        after: change.after,
+        replacements:
+          replacementCount
+      });
+    });
+  } finally {
+    presentation.saveAndClose();
+  }
+
+  return {
+    totalReplacements:
+      totalReplacements,
+    results: results
+  };
+}
+
+
+/**
+ * Opens a Google Docs document by ID
+ * and applies all requested changes.
+ */
+function applyActionChangesToDocument_(
+  fileId,
+  changes
+) {
+  const document =
+    DocumentApp.openById(fileId);
+
+  const results = [];
+  let totalReplacements = 0;
+
+  try {
+    changes.forEach(function(change) {
+      const replacementCount =
+        replaceTextInDocument_(
+          document,
+          change.before,
+          change.after
+        );
+
+      totalReplacements +=
+        replacementCount;
+
+      results.push({
+        before: change.before,
+        after: change.after,
+        replacements:
+          replacementCount
+      });
+    });
+  } finally {
+    document.saveAndClose();
+  }
+
+  return {
+    totalReplacements:
+      totalReplacements,
+    results: results
+  };
+}
+
+
+/**
+ * Returns a JSON response to the caller.
+ */
+function jsonResponse_(data) {
+  return ContentService
+    .createTextOutput(
+      JSON.stringify(data)
+    )
+    .setMimeType(
+      ContentService.MimeType.JSON
+    );
 }
 
 
@@ -726,10 +901,9 @@ function extractGoogleFileId_(urlOrId) {
 
   if (!match) {
     throw new Error(
-      'A valid Google Doc URL or file ID ' +
-      'was not provided.'
+      'A valid Google Slides or Google Docs ' +
+      'URL or file ID was not provided.'
     );
   }
-
   return match[0];
 }
