@@ -212,58 +212,93 @@ function doGet() {
  */
 function doPost(e) {
   try {
-    const request = parseJsonRequest_(e);
+    const route = String(
+      e && e.pathInfo
+        ? e.pathInfo
+        : ''
+    )
+      .replace(/^\/+|\/+$/g, '')
+      .toLowerCase();
 
-    /*
-     * Diagnostic logging.
-     * Do not log the webhook secret.
-     */
-    console.log(
-      'Web-app effective user: ' +
-      Session.getEffectiveUser().getEmail()
-    );
-
-    console.log(
-      'Received fileType: ' +
-      String(request.fileType || '')
-    );
-
-    console.log(
-      'Received raw fileId: ' +
-      String(request.fileId || '')
-    );
+    const request =
+      parseJsonRequest_(e);
 
     authenticateActionRequest_(request);
+
+    /*
+     * LIVE READ ROUTE
+     *
+     * URL:
+     * /exec/read
+     */
+    if (route === 'read') {
+      const command =
+        validateReadRequest_(request);
+
+      let result;
+
+      if (command.fileType === 'slides') {
+        result =
+          readSlidesContent_(
+            command.fileId
+          );
+      } else {
+        result =
+          readDocumentContent_(
+            command.fileId
+          );
+      }
+
+      return jsonResponse_({
+        ok: true,
+        operation: 'read',
+        fileType: command.fileType,
+        fileId: command.fileId,
+        name: result.name,
+        content: result.content
+      });
+    }
+
+    /*
+     * EDIT ROUTE
+     *
+     * URL:
+     * /exec
+     */
+    if (route !== '') {
+      throw new Error(
+        'Unknown endpoint: /' + route
+      );
+    }
 
     const command =
       validateActionRequest_(request);
 
-    console.log(
-      'Extracted file ID: ' +
-      command.fileId
-    );
-
     let result;
 
     if (command.fileType === 'slides') {
-      result = applyActionChangesToSlides_(
-        command.fileId,
-        command.changes
-      );
+      result =
+        applyActionChangesToSlides_(
+          command.fileId,
+          command.changes
+        );
     } else {
-      result = applyActionChangesToDocument_(
-        command.fileId,
-        command.changes
-      );
+      result =
+        applyActionChangesToDocument_(
+          command.fileId,
+          command.changes
+        );
     }
 
     return jsonResponse_({
       ok: true,
+      operation: 'edit',
       fileType: command.fileType,
       fileId: command.fileId,
       totalReplacements:
         result.totalReplacements,
-      results: result.results
+      results:
+        result.results
     });
   } catch (error) {
     console.error(
@@ -337,6 +372,37 @@ function authenticateActionRequest_(request) {
       'Unauthorized request.'
     );
   }
+}
+
+/**
+ * Validates a live file-reading request.
+ */
+function validateReadRequest_(request) {
+  const fileType = String(
+    request.fileType || ''
+  )
+    .trim()
+    .toLowerCase();
+
+  if (
+    fileType !== 'slides' &&
+    fileType !== 'docs'
+  ) {
+    throw new Error(
+      'fileType must be either ' +
+      '"slides" or "docs".'
+    );
+  }
+
+  const fileId =
+    extractGoogleFileId_(
+      request.fileId
+    );
+
+  return {
+    fileType: fileType,
+    fileId: fileId
+  };
 }
 
 
@@ -545,6 +611,172 @@ function jsonResponse_(data) {
     .setMimeType(
       ContentService.MimeType.JSON
     );
+}
+
+/* =====================================================
+ * LIVE FILE READING
+ * =====================================================
+ */
+
+/**
+ * Reads the current text from a Google Slides file.
+ */
+function readSlidesContent_(fileId) {
+  const presentation =
+    SlidesApp.openById(fileId);
+
+  try {
+    const slides =
+      presentation
+        .getSlides()
+        .map(function(slide, slideIndex) {
+          const blocks = [];
+
+          slide
+            .getPageElements()
+            .forEach(function(element) {
+              collectSlidesTextBlocks_(
+                element,
+                blocks
+              );
+            });
+
+          return {
+            slideNumber: slideIndex + 1,
+            slideId: slide.getObjectId(),
+            textBlocks: blocks
+          };
+        });
+
+    return {
+      name: presentation.getName(),
+      content: {
+        slides: slides,
+
+        /*
+         * Convenient plain-text version for the GPT.
+         */
+        plainText: slides
+          .map(function(slide) {
+            const slideText =
+              slide.textBlocks
+                .map(function(block) {
+                  return block.text;
+                })
+                .join('\n');
+
+            return (
+              '--- Slide ' +
+              slide.slideNumber +
+              ' ---\n' +
+              slideText
+            );
+          })
+          .join('\n\n')
+      }
+    };
+  } finally {
+    presentation.saveAndClose();
+  }
+}
+
+
+/**
+ * Recursively extracts text from Slides elements.
+ *
+ * Supports:
+ * - Shapes and text boxes
+ * - Tables
+ * - Groups
+ */
+function collectSlidesTextBlocks_(
+  element,
+  blocks
+) {
+  const type =
+    element.getPageElementType();
+
+  if (
+    type ===
+    SlidesApp.PageElementType.SHAPE
+  ) {
+    const text =
+      element
+        .asShape()
+        .getText()
+        .asString();
+
+    if (text.trim()) {
+      blocks.push({
+        elementId:
+          element.getObjectId(),
+        elementType: 'shape',
+        text: text
+      });
+    }
+
+    return;
+  }
+
+  if (
+    type ===
+    SlidesApp.PageElementType.TABLE
+  ) {
+    const table =
+      element.asTable();
+
+    for (
+      let row = 0;
+      row < table.getNumRows();
+      row++
+    ) {
+      for (
+        let column = 0;
+        column < table.getNumColumns();
+        column++
+      ) {
+        const textRange =
+          table
+            .getCell(row, column)
+            .getText();
+
+        if (!textRange) {
+          continue;
+        }
+
+        const text =
+          textRange.asString();
+
+        if (text.trim()) {
+          blocks.push({
+            elementId:
+              element.getObjectId(),
+            elementType: 'tableCell',
+            row: row,
+            column: column,
+            text: text
+          });
+        }
+      }
+    }
+
+    return;
+  }
+
+  if (
+    type ===
+    SlidesApp.PageElementType.GROUP
+  ) {
+    element
+      .asGroup()
+      .getChildren()
+      .forEach(function(child) {
+        collectSlidesTextBlocks_(
+          child,
+          blocks
+        );
+      });
+  }
 }
 
 
