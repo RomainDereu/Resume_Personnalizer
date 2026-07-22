@@ -1,64 +1,66 @@
 openapi: 3.1.0
+
 info:
-  title: Google Application Document Editor
+  title: Google Application Document Reader
   version: 1.0.0
   description: >
-    Applies approved exact before-and-after text replacements to Google Slides and Google Docs. Replacement text is
-    colored red.
+    Reads the current text from Google Slides and
+    Google Docs files.
+
+servers:
+  - url: https://script.google.com/macros/s/AKfycbwSms5u96qBZwgzmU4dWa8rzm9UDtdxbP_fjwalJcrWaHJWf6pGYgkNsaS9QdOxb4mO4Q
 
 paths:
-  /exec/read:
-    post:
+  /exec:
+    get:
       operationId: readFileContent
       summary: Read current Google file content
       description: >
-        Reads the current text from a private Google
-        Slides presentation or Google Docs document.
+        Reads current text from a private Google Slides
+        presentation or Google Docs document.
 
-      requestBody:
-        required: true
+      parameters:
+        - name: operation
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - read
 
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
+        - name: webhookSecret
+          in: query
+          required: true
+          description: Private shared secret.
+          schema:
+            type: string
+            enum:
+              - cbd1d713-c5cb-4bm6-8f1c-376744db6a59
 
-              properties:
-                webhookSecret:
-                  type: string
-                  enum:
-                    - YOUR_CURRENT_SECRET
-                  description: >
-                    Private shared secret required
-                    by the endpoint.
+        - name: fileType
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - slides
+              - docs
 
-                fileType:
-                  type: string
-                  enum:
-                    - slides
-                    - docs
-
-                fileId:
-                  type: string
-                  description: >
-                    Complete Google file URL or raw
-                    Google file ID.
-
-              required:
-                - webhookSecret
-                - fileType
-                - fileId
+        - name: fileId
+          in: query
+          required: true
+          description: >
+            Complete Google file URL or raw file ID.
+          schema:
+            type: string
 
       responses:
         "200":
           description: Current file content
-
           content:
             application/json:
               schema:
                 type: object
-
                 properties:
                   ok:
                     type: boolean
@@ -79,131 +81,5 @@ paths:
                     type: object
                     additionalProperties: true
 
-                  error:
-                    type: string
-
-  /exec:
-    get:
-      operationId: checkEditorStatus
-      summary: Check whether the editor is available
-
-      responses:
-        "200":
-          description: Editor status
-
-          content:
-            application/json:
-              schema:
-                type: object
-
-                properties:
-                  ok:
-                    type: boolean
-
-                  service:
-                    type: string
-
-    post:
-      operationId: applyTextChanges
-      summary: Apply approved text changes
-servers:
-  - url: https://script.google.com/macros/s/AKfycbxRGXIncxBiLQMGfCGyK7HARk4lGnNvpSsUreKnVbzyBXm5ZFf3akz6EXY0g7R5eMkaBQ
-paths:
-  /exec:
-    get:
-      operationId: checkEditorStatus
-      summary: Check whether the editor is available
-      responses:
-        "200":
-          description: Editor status
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  service:
-                    type: string
-    post:
-      operationId: applyTextChanges
-      summary: Apply approved text changes
-      description: >
-        Applies exact before-and-after replacements to a Google Slides presentation or Google Docs document. All
-        replacement text is red.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                webhookSecret:
-                  type: string
-                  enum:
-                    - cbd1d713-c5cb-4bm6-8f1c-376744db6a59
-                  description: |
-                    Private shared secret required by the editing endpoint.
-                fileType:
-                  type: string
-                  enum:
-                    - slides
-                    - docs
-                fileId:
-                  type: string
-                  description: |
-                    Full Google file URL or raw Google file ID.
-                changes:
-                  type: array
-                  minItems: 1
-                  maxItems: 50
-                  items:
-                    type: object
-                    additionalProperties: false
-                    properties:
-                      before:
-                        type: string
-                        description: |
-                          Exact existing text to find.
-                      after:
-                        type: string
-                        description: |
-                          Exact replacement text.
-                    required:
-                      - before
-                      - after
-              required:
-                - webhookSecret
-                - fileType
-                - fileId
-                - changes
-      responses:
-        "200":
-          description: Editing result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  fileType:
-                    type: string
-                  fileId:
-                    type: string
-                  totalReplacements:
-                    type: integer
-                  results:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        before:
-                          type: string
-                        after:
-                          type: string
-                        replacements:
-                          type: integer
                   error:
                     type: string

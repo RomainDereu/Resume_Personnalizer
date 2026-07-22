@@ -181,17 +181,98 @@ function extractOutputText_(data) {
  * Opening the deployed web-app URL in a browser should
  * return a small JSON response showing that it is ready.
  */
-function doGet() {
-  return jsonResponse_({
-    ok: true,
-    service: 'Job Application Assistant',
-    supportedFileTypes: [
-      'slides',
-      'docs'
-    ]
-  });
-}
+function doGet(e) {
+  try {
+    const parameters =
+      e && e.parameter
+        ? e.parameter
+        : {};
 
+    const operation = String(
+      parameters.operation || ''
+    )
+      .trim()
+      .toLowerCase();
+
+    /*
+     * GET /exec
+     * Health check when no operation is supplied.
+     */
+    if (operation === '') {
+      return jsonResponse_({
+        ok: true,
+        service: 'Job Application Assistant',
+        supportedFileTypes: [
+          'slides',
+          'docs'
+        ]
+      });
+    }
+
+    /*
+     * GET /exec?operation=read
+     */
+    if (operation !== 'read') {
+      throw new Error(
+        'Unknown operation: ' +
+        operation
+      );
+    }
+
+    const request = {
+      webhookSecret:
+        parameters.webhookSecret || '',
+
+      fileType:
+        parameters.fileType || '',
+
+      fileId:
+        parameters.fileId || ''
+    };
+
+    authenticateActionRequest_(request);
+
+    const command =
+      validateReadRequest_(request);
+
+    let result;
+
+    if (command.fileType === 'slides') {
+      result =
+        readSlidesContent_(
+          command.fileId
+        );
+    } else {
+      result =
+        readDocumentContent_(
+          command.fileId
+        );
+    }
+
+    return jsonResponse_({
+      ok: true,
+      operation: 'read',
+      fileType: command.fileType,
+      fileId: command.fileId,
+      name: result.name,
+      content: result.content
+    });
+  } catch (error) {
+    console.error(
+      error && error.stack
+        ? error.stack
+        : String(error)
+    );
+
+    return jsonResponse_({
+      ok: false,
+      error:
+        error && error.message
+          ? error.message
+          : String(error)
+    });
+  }
+}
 
 /**
  * Receives direct editing orders from a Custom GPT Action.
@@ -604,10 +685,21 @@ function applyActionChangesToDocument_(
  * Returns a JSON response to the caller.
  */
 function jsonResponse_(data) {
+  const json =
+    JSON.stringify(data);
+
+  console.log(
+    'RESPONSE_CHARS=' +
+    json.length
+  );
+
+  console.log(
+    'RESPONSE_PREVIEW=' +
+    json.slice(0, 300)
+  );
+
   return ContentService
-    .createTextOutput(
-      JSON.stringify(data)
-    )
+    .createTextOutput(json)
     .setMimeType(
       ContentService.MimeType.JSON
     );
@@ -622,62 +714,85 @@ function jsonResponse_(data) {
  * Reads the current text from a Google Slides file.
  */
 function readSlidesContent_(fileId) {
-  const presentation =
-    SlidesApp.openById(fileId);
+  const normalizedId =
+    extractGoogleFileId_(fileId);
+
+  let presentation;
 
   try {
-    const slides =
-      presentation
-        .getSlides()
-        .map(function(slide, slideIndex) {
-          const blocks = [];
+    presentation =
+      SlidesApp.openById(normalizedId);
+  } catch (error) {
+    throw new Error(
+      'SLIDES_READ_OPEN_FAILED | ' +
+      'fileId=' + normalizedId +
+      ' | effectiveUser=' +
+      (
+        Session
+          .getEffectiveUser()
+          .getEmail() ||
+        '[email unavailable]'
+      ) +
+      ' | Google error: ' +
+      error.message
+    );
+  }
 
-          slide
-            .getPageElements()
-            .forEach(function(element) {
-              collectSlidesTextBlocks_(
-                element,
-                blocks
-              );
-            });
+  try {
+    const sections = [];
 
-          return {
-            slideNumber: slideIndex + 1,
-            slideId: slide.getObjectId(),
-            textBlocks: blocks
-          };
-        });
+    presentation
+      .getSlides()
+      .forEach(function(slide, slideIndex) {
+        const blocks = [];
+
+        slide
+          .getPageElements()
+          .forEach(function(element) {
+            collectSlidesTextBlocks_(
+              element,
+              blocks
+            );
+          });
+
+        sections.push(
+          '--- Slide ' +
+          (slideIndex + 1) +
+          ' ---\n' +
+          blocks
+            .map(function(block) {
+              return block.text;
+            })
+            .join('\n')
+        );
+      });
 
     return {
       name: presentation.getName(),
+
       content: {
-        slides: slides,
+        slideCount:
+          presentation.getSlides().length,
 
-        /*
-         * Convenient plain-text version for the GPT.
-         */
-        plainText: slides
-          .map(function(slide) {
-            const slideText =
-              slide.textBlocks
-                .map(function(block) {
-                  return block.text;
-                })
-                .join('\n');
-
-            return (
-              '--- Slide ' +
-              slide.slideNumber +
-              ' ---\n' +
-              slideText
-            );
-          })
-          .join('\n\n')
+        plainText:
+          sections.join('\n\n')
       }
     };
-  } finally {
-    presentation.saveAndClose();
+  } catch (error) {
+    throw new Error(
+      'SLIDES_READ_EXTRACTION_FAILED | ' +
+      'fileId=' + normalizedId +
+      ' | presentation=' +
+      presentation.getName() +
+      ' | Google error: ' +
+      error.message
+    );
   }
+
+  /*
+   * Deliberately no saveAndClose().
+   * This operation only reads.
+   */
 }
 
 
@@ -762,6 +877,7 @@ function collectSlidesTextBlocks_(
 
     return;
   }
+
 
   if (
     type ===
@@ -1138,4 +1254,34 @@ function extractGoogleFileId_(urlOrId) {
     );
   }
   return match[0];
+}
+
+
+function testLiveSlidesRead() {
+  const result =
+    readSlidesContent_(
+      '1fZoeg628A8gaKly_Y4Yv0Pt8fjkbaUi8cDCjTgBKJMw'
+    );
+
+  console.log(
+    'Presentation: ' +
+    result.name
+  );
+
+  console.log(
+    'Slides: ' +
+    result.content.slideCount
+  );
+
+  console.log(
+    'Characters read: ' +
+    result.content.plainText.length
+  );
+
+  console.log(
+    result.content.plainText.slice(
+      0,
+      1000
+    )
+  );
 }
